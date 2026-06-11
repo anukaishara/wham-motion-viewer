@@ -18,7 +18,7 @@ class VideoAugmentor():
     def __init__(self, cfg, train=True):
         self.train = train
         self.l = cfg.DATASET.SEQLEN + 1
-        self.aug_dict = torch.load(_C.KEYPOINTS.COCO_AUG_DICT)        
+        self.aug_dict = torch.load(_C.KEYPOINTS.COCO_AUG_DICT, weights_only=False)
 
     def get_jitter(self, ):
         """Guassian jitter modeling."""

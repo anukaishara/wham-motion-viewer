@@ -1,0 +1,673 @@
+================================================================================
+MOTION VIEWER — PROJECT OVERVIEW
+Interactive 3D Human Motion Playback (Browser)
+================================================================================
+Location:  /home/sensor_readings/motion_viewer_ipcv
+Stack:     React 19 + Three.js + React Three Fiber + Vite
+Dev URL:   http://localhost:5173  (npm run dev)
+Entry:     index.html → src/main.jsx → src/App.jsx
+App.jsx:   769 lines (single-file app)
+
+--------------------------------------------------------------------------------
+WHAT THIS PROJECT DOES
+--------------------------------------------------------------------------------
+Loads the 5 CSV/JSON data files produced by the WHAM pipeline and renders a
+3D animated human avatar in the browser, frame by frame. The result is a
+photorealistic-looking skeletal figure that mirrors the exact motion of the
+real person captured in the original video.
+
+The viewer also supports:
+  - Three camera modes (free orbit, follow avatar, SLAM replay)
+  - Foot ground-contact visualisation (glowing rings)
+  - Manual frame scrubbing
+  - Full animation export to .webm video
+  - Video vs 3D split-screen mode: original video plays in frame-sync with
+    the 3D reconstruction; adjustable video offset for fine-tuning alignment
+  - Sync status panel: reads metadata.json from WHAM pipeline to display FPS,
+    frame counts and mismatch warnings from Stage 3
+  - Load warnings panel: non-blocking warnings for missing files or frame-count
+    mismatches surface in the sidebar instead of failing silently
+
+--------------------------------------------------------------------------------
+HOW THIS CONNECTS TO WHAM (Project 1)
+--------------------------------------------------------------------------------
+WHAM pipeline exports:
+  outputs/<name>/betas.json       → copy to public/data/betas.json
+  outputs/<name>/thetas.csv       → copy to public/data/thetas.csv
+  outputs/<name>/trans.csv        → copy to public/data/trans.csv
+  outputs/<name>/contact.csv      → copy to public/data/contact.csv
+  outputs/<name>/camera_path.csv  → copy to public/data/camera_path.csv
+
+The viewer fetches these files at startup from the /data/ URL path.
+Swapping the data files instantly changes which motion is displayed.
+
+--------------------------------------------------------------------------------
+FILE STRUCTURE
+--------------------------------------------------------------------------------
+motion_viewer_ipcv/
+├── index.html               Minimal HTML shell; mounts <div id="root">
+├── src/
+│   ├── main.jsx             React entry — ReactDOM.createRoot + StrictMode
+│   ├── App.jsx              Entire application (613 lines, single file)
+│   ├── index.css            Global resets (box-sizing, no margin,
+│   │                        overflow:hidden, background-color:#121212)
+│   └── assets/
+│       └── hero.png         Static PNG asset (44 KB); not currently
+│                            referenced in App.jsx
+├── public/
+│   ├── data/
+│   │   ├── betas.json               10 shape coefficients from WHAM
+│   │   ├── thetas.csv               N×72 joint angles
+│   │   ├── trans.csv                N×3 world translation
+│   │   ├── contact.csv              N×4 foot contact probabilities
+│   │   ├── camera_path.csv          N×7 SLAM camera pose
+│   │   ├── metadata.json            Sync metadata from WHAM Stage 3
+│   │   │                            (fps, frame counts, warnings)
+│   │   └── female_dancer_processed.mp4  Input video for split-screen mode
+│   ├── models/
+│   │   ├── smpl_female.glb  ~76 MB female SMPL mesh (rigged, with morph targets)
+│   │   └── smpl_male.glb    ~76 MB male SMPL mesh (rigged, with morph targets)
+│   ├── favicon.svg
+│   └── icons.svg
+├── package.json             Dependencies
+├── package-lock.json        Lockfile (npm)
+├── vite.config.js           Vite build config (react plugin)
+├── eslint.config.js         Lint rules
+└── README.md                Generic Vite+React scaffold readme (not project docs)
+
+--------------------------------------------------------------------------------
+TECHNOLOGY STACK — WHY EACH WAS CHOSEN
+--------------------------------------------------------------------------------
+React 19
+  Manages all UI state (current frame, playing, camera mode, gender, recording).
+  Chosen because state management for 5+ interdependent UI controls is cleaner
+  with reactive components than with vanilla JS event handlers.
+
+Three.js 0.183
+  Industry-standard WebGL 3D library. Handles the scene graph, bone hierarchy,
+  skinned mesh, lighting, shadows, and camera. Used directly for low-level
+  operations (Quaternion, Vector3, Box3).
+
+React Three Fiber (R3F) 9.5 + @react-three/drei 10.7
+  Wraps Three.js in React's component model. <Canvas> is the 3D viewport.
+  Components inside it are Three.js objects declared declaratively.
+  drei provides: OrbitControls, Environment (HDR), ContactShadows, useGLTF.
+  WHY R3F: integrates Three.js's render loop with React's state updates cleanly.
+  useFrame() runs callbacks inside Three.js's rAF loop, keeping animation
+  logic separate from React render cycles.
+
+Vite 8.0  (@vitejs/plugin-react v6.x)
+  Build tool and dev server with HMR (Hot Module Replacement).
+  The react plugin at v6.x uses the Oxc transformer (not Babel).
+  WHY VITE: near-instant startup vs webpack; native ES module dev server
+  means the 76 MB GLB files are served without bundling overhead.
+
+--------------------------------------------------------------------------------
+DATA LOADING (App.jsx, lines 327–370)
+--------------------------------------------------------------------------------
+On component mount (useEffect with empty dep array — runs once):
+
+  Promise.all([thetas.csv, betas.json, trans.csv]) — loaded together because
+  all three are required to display anything. If any fails, nothing shows.
+
+  contact.csv and camera_path.csv — loaded separately with .catch(() => {})
+  so that their absence does not block the main animation from starting.
+  These are optional enhancements.
+
+  metadata.json — loaded separately; on success, setMetadata(meta) drives
+  dynamic FPS and setLoadWarnings if meta.warnings is non-empty. On failure
+  (file not found or non-OK response), appends 'metadata.json not found —
+  using 30 fps' to loadWarnings and continues with 30 fps fallback.
+  WHY: WHAM can run at varying frame rates; metadata.json carries the true
+  export_fps so playback stays in sync with the original video.
+
+  Video file probe — async loop tries /data/processed_video.mp4 then
+  /data/input_video.mp4. The response body is immediately cancelled (only
+  the HTTP status matters). Sets videoUrl to the first found path, or
+  appends a warning to loadWarnings if neither exists.
+  WHY TWO PATHS: WHAM pipeline writes the preprocessed video under the run
+  output dir; the viewer can also accept a manually placed input_video.mp4.
+
+WHY Promise.all FOR CORE FILES:
+  The avatar cannot be posed without thetas, cannot be shaped without betas,
+  and cannot be positioned without trans. Loading them together gives one
+  clean "ready" signal (setDataReady(true)) and avoids partial-render states.
+
+WHY SEPARATE OPTIONAL LOADS:
+  contact.csv, camera_path.csv, and metadata.json may not exist if WHAM was
+  run without SLAM or on an older pipeline version. Silent failure is correct.
+
+DATA TRANSFORMS AT LOAD TIME:
+  thetas.csv → split by '\n' → split by ',' → parse Number → applySmoothing()
+  betas.json → direct JSON parse → betaJson.betas array
+  trans.csv  → split by '\n' → split by ',' → parse Number (no smoothing)
+  contact.csv → same as trans
+  camera_path.csv → same as trans
+
+applySmoothing (window=2):
+  Simple uniform (box) moving average ±2 frames.
+  For each frame i, averages all rows in [i-2, i+2], weighted equally.
+  NOT a bilateral filter — no value-based weighting, only positional proximity.
+  WHY: WHAM's Stage 3 already applies Savitzky-Golay, but the CSV→Number
+  parse can introduce floating point rounding noise. A mild client-side
+  smooth removes any remaining jitter without softening motion peaks.
+  WHY WINDOW 2 NOT LARGER: larger windows cause perceptible "smearing"
+  on sharp movements (kicks, turns). 2 is the minimum effective value.
+
+On successful load:
+  setDataReady(true) — enables all controls
+  setIsPlaying(true)  — auto-starts playback immediately
+
+--------------------------------------------------------------------------------
+PLAYBACK LOOP (App.jsx, lines 373–379)
+--------------------------------------------------------------------------------
+playbackFps is derived fresh every render (no stale closure risk):
+  playbackFps = metadata?.export_fps ?? metadata?.processed_fps
+              ?? metadata?.source_fps ?? 30
+
+  This means the playback speed automatically matches the actual video fps
+  from WHAM's metadata.json. Falls back to 30 if metadata is absent.
+
+useEffect(() => {
+  if (!isPlaying || motionData.length === 0) return;
+  const timer = setInterval(() => {
+    setCurrentFrame(prev => (prev + 1) % motionData.length);
+  }, 1000 / playbackFps);
+  return () => clearInterval(timer);
+}, [isPlaying, motionData.length, playbackFps]);
+
+WHY setInterval NOT requestAnimationFrame:
+  The 3D rendering runs via R3F's own rAF loop. The frame counter is UI state,
+  deliberately decoupled from render rate. Using rAF for both would tie the
+  playback speed to the display refresh rate (144fps screen = 144fps playback).
+  setInterval at 1000/playbackFps ms gives stable playback at the source fps.
+
+WHY playbackFps IN DEPS:
+  If metadata loads after the first interval is created (async), the dep
+  ensures the interval is recreated at the correct fps rather than running
+  at the initial 30 fps fallback.
+
+WHY (prev + 1) % length:
+  Loops animation. The modulo means the last frame wraps to 0 automatically.
+
+VIDEO SYNC (useEffect on [currentFrame, videoOffsetFrames, playbackFps, ...]):
+  When a video is loaded (videoUrl set), currentFrame is the master clock.
+  The video element is never allowed to free-run — on every currentFrame
+  change the viewer computes:
+    videoFrame = clamp(currentFrame + videoOffsetFrames, 0, totalFrames)
+    video.currentTime = videoFrame / playbackFps
+  This frame-seeks the video to the exact position matching the reconstruction.
+  WHY SEEK NOT PLAY: free-running video drifts from the 3D animation because
+  setInterval and the video decoder run on independent clocks. Seeking on
+  every frame guarantees sample-accurate alignment at any playback speed.
+
+--------------------------------------------------------------------------------
+THE 3D AVATAR — SMPLAnimator COMPONENT (lines 141–264)
+--------------------------------------------------------------------------------
+
+BONE LOADING (useEffect on [scene]):
+  scene.updateMatrixWorld(true) — forces Three.js to recompute all transforms
+  before we measure the bounding box. Without this, new models return zero-size.
+
+  Box3.setFromObject(scene) → maxDim = max(x, y, z)
+  scaleRef.current = 2.0 / maxDim
+  WHY 2.0: the scene units are metres and the avatar is ~1.8m tall. Scaling to
+  2.0 units makes it comfortably visible in the default camera FOV=50 at z=4.
+
+  groundYRef.current = box.min.y * scale
+  WHY: the ground plane and shadow must be at the bottom of the avatar's feet,
+  not at Y=0. The scale factor shifts this correctly.
+
+  scene.traverse() — iterates all scene graph nodes.
+    child.name.replace(/^[mf]_avg_/, '') — strips the gender prefix
+    (f_avg_Pelvis → Pelvis, m_avg_L_Hip → L_Hip) so the same bone lookup
+    dictionary works for both male and female GLBs.
+    child.frustumCulled = false — prevents Three.js from hiding the avatar
+    when its bounding sphere exits the camera frustum during animation
+    (common when the avatar walks to the edge of the screen).
+    castShadow = receiveShadow = true on skinned meshes.
+
+BETA MORPH TARGETS (useEffect on [scene, betaData]):
+  The SMPL GLBs have morph targets (blend shapes) named:
+    Shape000_pos, Shape000_neg, Shape001_pos, Shape001_neg, ... Shape009_neg
+  Each beta coefficient controls one shape axis.
+  Positive beta → activate _pos morph. Negative beta → activate _neg morph.
+  BETA_SCALE = 0.15: betas are multiplied by BETA_SCALE first, then clamped.
+    scaled_beta = betaData[i] * 0.15
+    if scaled_beta > 0: influence = min(scaled_beta, 1.0)  on _pos morph
+    if scaled_beta < 0: influence = min(-scaled_beta, 1.0) on _neg morph
+  SMPL betas have standard deviation ~1; raw betas at full weight would cause
+  extreme deformation of the mesh. 0.15 gives realistic proportional differences.
+
+PER-FRAME KINEMATIC UPDATE (useFrame):
+  Runs every render tick (60fps or display refresh rate).
+  currentFrame is React state; the closure captures its latest value.
+
+  TRANSLATION:
+    td = transData[currentFrame]     // world XYZ for this frame
+    off = transData[0]               // first-frame position
+    groupRef.current.position.set(
+      (td[0] - off[0]) * scale,
+      (td[1] - off[1]) * scale,
+      (td[2] - off[2]) * scale
+    )
+    WHY SUBTRACT FRAME 0: WHAM's trans_world is in absolute world coordinates.
+    If the person was filmed 50m from the SLAM origin, the avatar would spawn
+    at X=50 in Three.js units. Subtracting frame 0 normalises the avatar to
+    always start at the scene origin, keeping it visible in the default camera.
+    WHY MULTIPLY BY SCALE: same scale factor computed from bounding box so
+    avatar position matches avatar size in the scene.
+
+  JOINT ROTATIONS:
+    The SMPL_BONE_ORDER array defines the canonical order of 24 joints.
+    For joint i: rx = frameData[i*3], ry = frameData[i*3+1], rz = frameData[i*3+2]
+    angle = sqrt(rx² + ry² + rz²)  — magnitude of axis-angle vector
+    if angle > 1e-4:
+      axis = (rx/angle, ry/angle, rz/angle)  — unit axis
+      q.setFromAxisAngle(axis, angle)
+    else:
+      q.identity()  — near-zero rotation → identity to avoid NaN from /0
+    bone.quaternion.copy(q)
+
+    WHY QUATERNION NOT EULER: Three.js Bone.rotation is Euler angles.
+    Euler angles have gimbal lock and order-dependency. Using quaternions
+    (Three.js Quaternion.setFromAxisAngle) is numerically stable for all
+    joint angles and matches how WHAM exports the data.
+
+    WHY CHECK angle > 1e-4: axis = vec/angle divides by magnitude. If angle
+    is 0 or near-zero, this divides by zero → NaN. The 1e-4 threshold safely
+    catches all near-rest poses and applies identity instead.
+
+SMPL_BONE_ORDER constant:
+  ['Pelvis', 'L_Hip', 'R_Hip', 'Spine1', 'L_Knee', 'R_Knee', 'Spine2',
+   'L_Ankle', 'R_Ankle', 'Spine3', 'L_Foot', 'R_Foot', 'Neck', 'L_Collar',
+   'R_Collar', 'Head', 'L_Shoulder', 'R_Shoulder', 'L_Elbow', 'R_Elbow',
+   'L_Wrist', 'R_Wrist', 'L_Hand', 'R_Hand']
+  This MUST match WHAM's internal joint ordering exactly. Indices 0–23
+  correspond to columns 0–2, 3–5, 6–8, ... 69–71 in thetas.csv.
+
+--------------------------------------------------------------------------------
+CONTACT MARKERS — ContactMarkers COMPONENT (lines 36–76)
+--------------------------------------------------------------------------------
+WHY THIS EXISTS:
+  The contact.csv gives 4 sigmoid probabilities per frame indicating which
+  parts of each foot are on the ground. Visualising this tells you immediately
+  whether the reconstruction correctly captures heel-strikes, toe-offs, etc.
+
+HOW IT WORKS:
+  Two ring meshes (RingGeometry, r_inner=0.06, r_outer=0.12, 32 segments).
+  Blue (#38bdf8) = left foot. Purple (#a78bfa) = right foot.
+  Rings are flat on the XZ plane (rotation -π/2 around X).
+  DoubleSide material so the ring is visible from below (camera can go low).
+
+  Per frame (useFrame):
+    leftContact = (contact[0] + contact[2]) / 2 > 0.5
+    rightContact = (contact[1] + contact[3]) / 2 > 0.5
+    WHY AVERAGE HEEL+TOE: a heel-strike has contact[0]=1, contact[2]=0.
+    A toe-off has contact[0]=0, contact[2]=1. Averaging catches both phases.
+    Threshold 0.5 (CONTACT_THRESHOLD) is a clean 50% probability cutoff.
+
+  Ring position is set to the real 3D world position of L_Foot / R_Foot bones
+  (getWorldPosition) projected onto groundY (Y fixed to ground level).
+  WHY WORLD POSITION OF BONE: the foot bone moves with the avatar group.
+  Reading its world position gives the correct X/Z regardless of avatar
+  translation, avoiding the need to manually add the avatar's offset.
+
+useRef for ring mesh refs (not useState) — ring visibility/position is updated
+every frame; useState would trigger React re-renders at 60fps, very expensive.
+
+--------------------------------------------------------------------------------
+CAMERA FOLLOW — CameraFollow COMPONENT (lines 83–102)
+--------------------------------------------------------------------------------
+WHY THIS EXISTS:
+  Without follow mode, when the avatar walks across the scene the camera stays
+  fixed and the avatar walks out of frame.
+
+HOW IT WORKS:
+  smoothTarget is a persistent THREE.Vector3 (useRef — not re-created each frame).
+  On first frame: snap immediately to avatar position + 0.9 (head height).
+  Subsequent frames: smoothTarget.lerp(newTarget, 0.12)
+    — lerp factor 0.12 = moves 12% of remaining distance per frame
+    — at 60fps this gives smooth camera lag without oscillation
+
+  controlsRef.current.target.copy(smoothTarget)
+  WHY NOT CALL controls.update():
+    R3F already calls OrbitControls.update() inside its render loop.
+    Calling it again inside useFrame causes the damping calculation to run
+    twice per frame. Damping + external lerp both modify the target → they
+    fight each other → camera vibrates. Explicit update() call is omitted.
+
+  OrbitControls has enableDamping=false when cameraMode='follow' for the
+  same reason — damping on OrbitControls + lerp in useFrame = double-smoothing
+  that causes oscillation. When mode is 'free', damping is re-enabled
+  (dampingFactor=0.06) for natural feel with mouse drag.
+
+WHY Y OFFSET 0.9:
+  The avatar's group position tracks the pelvis (root). The pelvis is at
+  approximately 50% body height. 0.9 scene units above pelvis ≈ chest height,
+  which is a more natural look-at target for a following camera than the feet.
+
+--------------------------------------------------------------------------------
+SLAM CAMERA — SlamCamera COMPONENT (lines 108–136)
+--------------------------------------------------------------------------------
+WHY THIS EXISTS:
+  camera_path.csv contains the exact world-space position and orientation
+  of the original recording camera, frame by frame. Replaying this makes the
+  avatar appear as if it is in the original video — exact same perspective.
+
+HOW IT WORKS:
+  Reads row[idx] from camData: [x, y, z, qx, qy, qz, qw]
+  Applies same translation offset and scale as the avatar:
+    camera.position.set((x - off[0])*s, (y - off[1])*s, (z - off[2])*s)
+  Quaternion conversion (OpenCV → OpenGL camera):
+    q_exported * flipX where flipX = quaternion(axis=X, angle=π)
+    WHY: WHAM exports in OpenCV convention (camera looks +Z, Y points down).
+    Three.js cameras look -Z, Y points up. A 180° rotation around local X
+    flips Y and Z simultaneously, converting between the two conventions.
+    camera.quaternion.copy(q_converted)
+
+SCALE NOTE:
+  SlamCamera receives slamScaleRef from App, which is hardcoded to useRef(2.0)
+  as an approximation of the world scale. The avatar's bounding-box-derived
+  scale (2.0/maxDim, computed inside SMPLAnimator) is NOT directly shared with
+  SlamCamera; the hardcoded 2.0 assumes the model maxDim ≈ 1.0. If the GLB
+  model dimensions differ, a small positional offset between camera and avatar
+  may appear in SLAM mode.
+
+WHY OrbitControls IS DISABLED IN SLAM MODE:
+  OrbitControls constantly overrides camera.position and camera.quaternion.
+  If OrbitControls is active while SlamCamera writes to the camera, they
+  fight each frame and the camera shakes erratically. Disabling controls
+  entirely in SLAM mode gives SlamCamera exclusive camera ownership.
+
+The SLAM button is disabled when camPathData.length === 0, so it only appears
+as a valid option when camera_path.csv was successfully loaded.
+
+--------------------------------------------------------------------------------
+CANVAS RECORDER — CanvasRecorder COMPONENT (lines 269–309)
+--------------------------------------------------------------------------------
+WHY THIS EXISTS:
+  Users may want to share or present the animation. Exporting as .webm video
+  requires capturing the WebGL canvas — this cannot be done from outside the
+  <Canvas> because the WebGL context is only accessible inside R3F components.
+
+HOW IT WORKS:
+  gl.domElement — the underlying HTMLCanvasElement that Three.js renders to.
+  gl.domElement.captureStream(30) — browser API that creates a MediaStream
+  from the canvas at 30fps.
+
+  MediaRecorder codec selection (in order of preference):
+    video/webm;codecs=vp9   — best quality, widely supported
+    video/webm;codecs=vp8   — fallback
+    video/webm               — browser default codec
+  videoBitsPerSecond: 8_000_000 (8 Mbps) — high quality recording.
+
+  gl={{ preserveDrawingBuffer: true }} on <Canvas>:
+    By default Three.js clears the WebGL drawing buffer after compositing.
+    preserveDrawingBuffer keeps the last frame's pixels available so
+    captureStream can read them. This is required for recording to work.
+    WHY NOT ALWAYS ON: preserveDrawingBuffer prevents certain GPU optimisations;
+    it is only needed for the recording feature but must be set at Canvas init.
+
+  RECORDING PLAYBACK LOOP (handleRecordFrame):
+    While isRecording=true, useFrame in CanvasRecorder calls onFrameCaptured()
+    every render tick. handleRecordFrame advances currentFrame by 1 per tick
+    and updates recProgress (0–100%). When recFrameRef > totalFrames, sets
+    isRecording=false which triggers recorder.stop() → onstop callback →
+    Blob download.
+    WHY NOT use setInterval for recording: during recording we want exactly
+    one animation frame = one video frame captured. setInterval timing is
+    imprecise and could skip or duplicate canvas captures. Driving via useFrame
+    guarantees frame-perfect sync between animation state and video capture.
+
+  DOWNLOAD:
+    URL.createObjectURL(blob) → <a> element with .click() → browser saves file
+    URL.revokeObjectURL(url) immediately after — prevents memory leak from
+    dangling blob URLs.
+
+  File name: smpl_animation_<Date.now()>.webm
+    Timestamp ensures uniqueness even if recorded multiple times.
+
+--------------------------------------------------------------------------------
+UI SIDEBAR (App.jsx lines ~433–628)
+--------------------------------------------------------------------------------
+Positioned absolute, top:20 left:20, z-index:20, width:280px.
+maxHeight: calc(100vh - 40px) + overflowY:auto — sidebar scrolls when the
+window is short (avoids controls being cut off on small monitors).
+Glassmorphism styling: rgba(15,23,42,0.88) background + backdropFilter:blur(14px)
++ 1px rgba(255,255,255,0.08) border.
+
+Header:
+  H1 "SMPL Kinematics" — gradient text (#60a5fa → #c084fc).
+  Subtitle: shows frame count, playbackFps (from metadata), and contact status.
+  e.g. "459 frames · 30 fps · contact ✓" or "Loading...".
+
+View Mode toggle (new):
+  Two buttons: "3D Only" | "Video vs 3D"
+  "Video vs 3D" is disabled (opacity 0.5, not-allowed cursor) when videoUrl
+  is null (no video file found at startup). Active button has gradient bg.
+  onChange: setViewMode(id). Does NOT reset currentFrame — the video sync
+  effect includes viewMode in its deps and re-seeks on mode switch.
+
+Body Model selector (select):
+  Options: Female / Male
+  onChange: setGender() + setCurrentFrame(0)
+  WHY RESET FRAME: switching models reloads the GLB; the new skeleton may have
+  slightly different proportions and the morph targets need to be re-applied.
+  Resetting to frame 0 avoids showing a stale pose on the new model.
+
+Camera Mode buttons (3 buttons with emoji labels):
+  🖱 Free  |  🎯 Follow  |  🎥 Slam
+  SLAM button is disabled (opacity 0.4, disabled=true) when camPathData.length === 0.
+  Active button has gradient background (linear-gradient #3b82f6→#8b5cf6).
+  Inactive buttons have #1e293b background.
+
+Play/Pause button:
+  disabled={!dataReady} — cannot play before data loads.
+  When paused: gradient (blue→purple). When playing: flat #334155.
+  transition: 'background .2s' for smooth visual feedback.
+
+Frame scrubber (input type=range):
+  min=0, max=totalFrames, value=currentFrame (controlled input)
+  onChange: setIsPlaying(false) then setCurrentFrame(value)
+  WHY PAUSE ON SCRUB: if playing, the interval fires setCurrentFrame every
+  33ms; the scrubber also fires setCurrentFrame. Two setters racing causes
+  the scrubber to jump. Pausing on scrub gives the user full manual control.
+  Below scrubber: "Frame X / Y  · Z.ZZs" — timestamp derived from
+  currentFrame / playbackFps.
+  accentColor: '#60a5fa' — matches the blue in the app's color palette.
+
+Video Offset Frames (input type=number, split mode only):
+  Only rendered when inSplitMode is true.
+  Signed integer; added to currentFrame when computing video.currentTime.
+  Use case: WHAM may drop the first N frames of video when tracking starts;
+  offsetting by +N aligns the video to the reconstruction.
+
+Sync Status panel (new):
+  Always shown. Displays:
+    FPS: <playbackFps>
+    Theta frames: <motionData.length>
+    Video frames: <metadata.source_frame_count> (only when metadata loaded)
+    ⚠ Frame count mismatch  (only when |theta - video| > 5 frames)
+  Mismatch threshold of 5 frames avoids false positives from ±1 rounding.
+
+Ground Contact legend:
+  Only rendered when contactData.length > 0 (data loaded).
+  Shows "🔵 Left foot" and "🟣 Right foot" emoji labels for foot rings.
+
+Load Warnings panel (new):
+  Only rendered when loadWarnings.length > 0.
+  Amber-tinted background rgba(245,158,11,0.08) + border.
+  Each warning is ⚠ + text on its own line.
+  Warnings accumulate from: metadata.json missing, no video file found,
+  frame count mismatches in metadata.json.
+
+Download Animation button:
+  While recording: pulsing red dot (recPulse CSS animation) + "Recording…X%"
+  While ready: green gradient with download SVG icon + glow box-shadow.
+  Progress bar below button: animated width transition at 0.15s linear.
+
+Custom scrollbar (webkit):
+  ::-webkit-scrollbar { width: 4px }  so the scrollable sidebar has a subtle
+  thin bar rather than the default OS-style scrollbar.
+
+Inline <style> block:
+  @keyframes recPulse — opacity 1→0.4→1, scale 1→0.7→1 at 0.9s infinite.
+  Defined inline to keep App.jsx self-contained (no external CSS file for
+  component-specific animations).
+
+--------------------------------------------------------------------------------
+VIDEO SPLIT MODE (App.jsx lines ~633–748)
+--------------------------------------------------------------------------------
+WHY THIS EXISTS:
+  The 3D reconstruction is only useful if the viewer can judge how closely
+  it matches the original video. Split mode places the original video on the
+  left half and the 3D canvas on the right half, frame-by-frame in sync.
+
+LAYOUT:
+  The 3D canvas is always mounted (never conditionally rendered) to avoid
+  destroying and recreating Three.js state when toggling modes.
+  Instead, its CSS left/width are transitioned:
+    inSplitMode: left:'50%', width:'50%'
+    3D-only:     left:'0',   width:'100%'
+  CSS transition 0.15s ease animates the resize smoothly.
+  The video panel is conditionally rendered only when inSplitMode is true:
+    position:absolute top:0 left:0 width:50% height:100%
+
+VIDEO ELEMENT:
+  muted + preload="auto" + playsInline — prevents autoplay policies from
+  blocking the video; muted is required for autoplay in most browsers.
+  objectFit: 'contain' — avoids cropping the video.
+  The <video> is NEVER set to play/pause via the DOM — React controls the
+  current time only via video.currentTime = videoFrame / playbackFps.
+  WHY: calling video.play() would start the browser's native playback
+  clock which diverges from setInterval; seeking is the only reliable sync.
+
+OVERLAYS ON VIDEO PANEL:
+  Top-right: "Input Video" label (pointer-events:none, dark bg pill).
+  Bottom-left: "Frame N / M  · T.TTTs  · FPS fps" stats bar.
+
+OVERLAY ON 3D CANVAS (split mode):
+  Top-left: "Reconstruction" label (pointer-events:none, dark bg pill).
+
+--------------------------------------------------------------------------------
+3D SCENE SETUP (<Canvas> lines ~683–737)
+--------------------------------------------------------------------------------
+Camera: position [0, 1.0, 4], fov=50
+  WHY FOV 50: narrower than default (75) — reduces perspective distortion on
+  the human figure. Wide FOV makes limbs look stretched at frame edges.
+  WHY POSITION (0,1,4): avatar is 2 units tall, starting at origin. Z=4 gives
+  comfortable framing. Y=1 centres on the upper torso.
+
+shadows — enables shadow map computation on the renderer.
+
+gl={{ antialias: true, preserveDrawingBuffer: true }}
+  antialias: smooth edges on the mesh
+  preserveDrawingBuffer: required for CanvasRecorder
+
+Canvas background: <color attach="background" args={['#0f172a']} />
+  Sets the Three.js scene background to the same dark navy as the page,
+  preventing any white flash when the canvas initialises.
+
+Lighting:
+  ambientLight intensity=0.5 — base fill to prevent pitch-black shadows.
+  spotLight [4,8,4] angle=0.3 penumbra=0.8 intensity=2.5 castShadow
+    — warm key light from upper right front; shadow-mapSize=1024
+  spotLight [-4,6,-4] angle=0.5 penumbra=1 intensity=1.0 color=#93c5fd
+    — cool blue-tinted fill light from upper left rear; mimics sky GI.
+  WHY TWO SPOTS: single light creates harsh shadows. Two from opposite sides
+  gives depth and visual separation between limbs.
+
+Environment preset="city" — loads an HDR environment map for PBR reflections.
+  Makes the skin/cloth material react to environmental lighting realistically.
+
+ContactShadows position=[0,groundY,0] opacity=0.55 scale=20 blur=2 far=4
+  — soft circular shadow projected downward from the avatar onto the ground.
+  Separate from Three.js shadow maps; ContactShadows uses a camera below the
+  scene to capture a top-down shadow texture. blur=2 gives soft edges.
+
+gridHelper args=[40,40,'#1e293b','#1e293b'] at groundY
+  — 40×40 unit grid matching the dark background colour. Subtle spatial cue.
+
+OrbitControls:
+  minDistance=1.5, maxDistance=20 — prevents clipping inside or too far out.
+  maxPolarAngle=π/2+0.1 — allows camera to go just below horizontal.
+  The +0.1 lets the user look at the feet from slightly below ground level
+  without flipping the camera.
+  enableDamping=true only in 'free' mode (dampingFactor=0.06).
+  Entirely absent (not rendered) in 'slam' mode.
+
+Suspense fallback={null} — shows nothing while GLB loads (no loading spinner).
+  The avatar appears as soon as the GLB is parsed and data is ready.
+
+--------------------------------------------------------------------------------
+STATE VARIABLES (App.jsx lines 296–319)
+--------------------------------------------------------------------------------
+motionData        []        N×72 float array — theta rows from thetas.csv
+betaData          []        10-element float array — from betas.json
+transData         []        N×3 float array — translation rows
+contactData       []        N×4 float array — foot contact rows
+camPathData       []        N×7 float array — camera path rows
+currentFrame      0         Integer, 0 to N-1, drives all animation
+isPlaying         false     Controls setInterval playback loop
+gender            'female'  Selects smpl_female.glb or smpl_male.glb
+dataReady         false     Becomes true when core 3 files load
+groundY          -1.05      Computed from GLB bounding box; drives shadow/grid Y
+cameraMode        'follow'  'free' | 'follow' | 'slam'
+isRecording       false     Controls CanvasRecorder start/stop
+recProgress       0         0-100 shown in the progress bar
+metadata          null      Parsed metadata.json object (fps, frame counts,
+                            warnings). Drives playbackFps derived value.
+viewMode          '3d'      '3d' | 'split' — controls split-screen layout
+videoUrl          null      Path to found video file ('/data/processed_video.mp4'
+                            or '/data/input_video.mp4'), null if not found
+videoOffsetFrames 0         Integer offset applied to video seek in split mode
+loadWarnings      []        Array of warning strings shown in sidebar panel
+
+Derived (no state — recomputed every render):
+  playbackFps = metadata?.export_fps ?? metadata?.processed_fps
+              ?? metadata?.source_fps ?? 30
+  totalFrames = Math.max(0, motionData.length - 1)
+  inSplitMode = viewMode === 'split' && !!videoUrl
+
+Refs (not state — updated without triggering re-renders):
+  recFrameRef      Current recording frame counter (useRef(0))
+  recStartFrameRef Recording start frame, always reset to 0 before recording
+  controlsRef      OrbitControls instance
+  avatarGroupRef   <group> wrapping the SMPL primitive
+  slamScaleRef     Hardcoded useRef(2.0) passed to SlamCamera as an
+                   approximate world scale. NOTE: this is NOT the same as
+                   SMPLAnimator's bounding-box-derived scaleRef (2.0/maxDim),
+                   which is local to that component and not shared.
+  videoRef         <video> element ref; used by the video-sync useEffect
+                   to seek the video to the matching reconstruction frame.
+
+--------------------------------------------------------------------------------
+COORDINATE SYSTEMS IN THE VIEWER
+--------------------------------------------------------------------------------
+Three.js world space: Y-up, right-hand rule.
+WHAM exports thetas in Y-up space (rollout applies π flip internally).
+WHAM exports trans in Y-up space. Avatar position matches directly.
+WHAM exports camera_path in OpenCV convention (Y-down).
+  → SlamCamera applies quaternion * flipX(π) to convert to OpenGL Y-up.
+
+Avatar group offset: transData[0] subtracted so avatar starts at origin.
+Camera SLAM offset: same transData[0] subtracted, same scale applied.
+This ensures avatar and camera stay in the same coordinate frame.
+
+--------------------------------------------------------------------------------
+PERFORMANCE NOTES
+--------------------------------------------------------------------------------
+All per-frame animation runs inside useFrame — never in React state updates.
+useRef is used for values that change every frame (scaleRef, boneMap, groundYRef).
+useState is only used for values that need to trigger UI re-renders.
+frustumCulled=false on skinned mesh prevents avatar disappearing during camera follow.
+The 76 MB GLBs are loaded once by useGLTF and cached by drei's asset cache —
+  switching gender calls useGLTF again but the second model is cached in memory.
+Video sync: video.currentTime assignment on every currentFrame change
+  (~30 times/second). The seek cost is low for .mp4 with keyframes; the
+  browser handles it asynchronously so there is no jank on the 3D canvas.
+The 3D canvas div is never conditionally rendered — only repositioned via CSS —
+  so Three.js, R3F, and all useRef state survive split/3D-only mode switches.
+
+================================================================================

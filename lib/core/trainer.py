@@ -320,7 +320,7 @@ class Trainer():
         
     def load_pretrained(self, model_path):
         if osp.isfile(model_path):
-            checkpoint = torch.load(model_path)
+            checkpoint = torch.load(model_path, weights_only=False)
 
             # network
             ignore_keys = ['smpl.body_pose', 'smpl.betas', 'smpl.global_orient', 'smpl.J_regressor_extra', 'smpl.J_regressor_eval']

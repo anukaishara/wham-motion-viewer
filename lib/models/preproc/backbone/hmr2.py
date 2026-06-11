@@ -72,6 +72,6 @@ class HMR2(nn.Module):
 def hmr2(checkpoint_pth):
     model = HMR2()
     if os.path.exists(checkpoint_pth):
-        model.load_state_dict(torch.load(checkpoint_pth, map_location='cpu')['state_dict'], strict=False)
+        model.load_state_dict(torch.load(checkpoint_pth, map_location='cpu', weights_only=False)['state_dict'], strict=False)
         print(f'Load backbone weight: {checkpoint_pth}')
     return model

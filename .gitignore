@@ -1,0 +1,64 @@
+# ── Large data / model weights ─────────────────────────────────────────────
+checkpoints/
+dataset/
+
+# ── Input videos (copyrighted) ──────────────────────────────────────────────
+inputs/
+uploads/
+
+# ── Generated outputs ───────────────────────────────────────────────────────
+outputs/
+
+# ── Example media (keep drone_calib.txt) ────────────────────────────────────
+examples/*.mp4
+examples/*.mov
+examples/*.avi
+examples/*.mkv
+
+# ── Frontend build artifacts & bundled data ─────────────────────────────────
+motion_viewer/node_modules/
+motion_viewer/dist/
+motion_viewer/public/models/
+motion_viewer/public/data/
+
+# ── IDE / editor ────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.code-workspace
+
+# ── Python cache ────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Virtual environments ────────────────────────────────────────────────────
+.env
+.venv
+env/
+venv/
+
+# ── Large binary / model file types ─────────────────────────────────────────
+*.pth
+*.pth.tar
+*.ckpt
+*.pt
+*.pkl
+*.npy
+*.npz
+*.h5
+*.hdf5
+*.bin
+*.safetensors
+
+# ── Misc ─────────────────────────────────────────────────────────────────────
+*.DS_Store
+*.log
+*.tmp
+*.swp
+~$*
