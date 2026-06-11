@@ -1,59 +1,107 @@
-# WHAM — Extended Pipeline with Motion Viewer
+<div align="center">
 
-An extended implementation of [WHAM: Reconstructing World-grounded Humans with Accurate 3D Motion](https://arxiv.org/abs/2312.07531) (CVPR 2024), built for the IPCV course project.
+# WHAM — Extended Pipeline & Motion Viewer
 
-This repo adds a **GPU-accelerated video preprocessing stage**, a **unified three-stage pipeline**, and a **web-based Motion Viewer** on top of the original WHAM codebase.
+**3D human motion reconstruction from video, with GPU preprocessing and an interactive web-based Motion Viewer**
 
----
+[![Python](https://img.shields.io/badge/Python-3.9-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.7-ee4c2c?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![CUDA](https://img.shields.io/badge/CUDA-12.8-76b900?logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-toolkit)
+[![React](https://img.shields.io/badge/React-18-61dafb?logo=react&logoColor=black)](https://react.dev/)
+[![License](https://img.shields.io/badge/License-MIT-green)](./LICENSE)
 
-## What it does
+Built on top of [WHAM: Reconstructing World-grounded Humans with Accurate 3D Motion](https://arxiv.org/abs/2312.07531) (CVPR 2024)  
+as an IPCV course project.
 
-Given an ordinary video of a person, the pipeline reconstructs:
-
-| Output | Description |
-|--------|-------------|
-| `betas.json` | 10 SMPL body-shape coefficients |
-| `thetas.csv` | Per-frame joint pose (72 values × N frames) |
-| `trans.csv` | Per-frame world-space root translation (3 × N) |
-| `contact.csv` | Per-frame foot-contact probabilities (4 × N) |
-| `camera_path.csv` | Per-frame camera pose in world space (7 × N) |
-| `metadata.json` | Frame-sync metadata for the Motion Viewer |
-
-Results are consumed by the included **Motion Viewer** — a React app that plays back the 3D reconstruction alongside the original video.
+</div>
 
 ---
 
-## Pipeline overview
+## What this adds
+
+| Feature | Description |
+|---------|-------------|
+| **GPU Preprocessing** | Kornia/PyTorch stage: ego-motion compensation, motion saliency, adaptive gamma, CLAHE, guided filter, unsharp masking |
+| **Unified Pipeline** | Single `pipeline.py` entry point — preprocess → infer → extract, fully deterministic |
+| **Parameter Extraction** | Quaternion continuity correction + Savitzky-Golay smoothing → clean betas / thetas / trans / contact / camera_path |
+| **Web Motion Viewer** | React + Three.js app that plays back the 3D SMPL reconstruction frame-synced with the original video |
+| **REST API** | FastAPI backend with live progress streaming for the web UI |
+
+---
+
+## Pipeline
 
 ```
-Input video
-    │
-    ▼
-Stage 1 — GPU Preprocessing (kornia / PyTorch)
-    ego-motion compensation → motion saliency → adaptive gamma
-    → CLAHE → guided filter → unsharp masking
-    │
-    ▼
-Stage 2 — WHAM Inference
-    2D detection (ViTPose / YOLO) → DPVO global SLAM
-    → feature extraction → WHAM transformer → SMPL parameters
-    │
-    ▼
-Stage 3 — Parameter Extraction
-    quaternion continuity correction → Savitzky-Golay smoothing
-    → betas / thetas / trans / contact / camera_path / metadata
+┌─────────────────────────────────────────────────────────┐
+│                      Input Video                        │
+└────────────────────────┬────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│          Stage 1 — GPU Preprocessing                    │
+│   ego-motion compensation → motion saliency             │
+│   → adaptive gamma → CLAHE → guided filter              │
+│   → unsharp masking                                     │
+│                                                         │
+│   Runs in isolated subprocess (CUDA context released    │
+│   before Stage 2 to avoid ultralytics Conv2d conflicts) │
+└────────────────────────┬────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│          Stage 2 — WHAM Inference                       │
+│   ViTPose / YOLO (2D detection)                         │
+│   → DPVO (global SLAM)                                  │
+│   → WHAM Transformer → SMPL parameters                  │
+└────────────────────────┬────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│          Stage 3 — Parameter Extraction                 │
+│   quaternion continuity correction                      │
+│   → Savitzky-Golay smoothing                            │
+│   → betas · thetas · trans · contact · camera_path      │
+└────────────────────────┬────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│              Web Motion Viewer                          │
+│   3D SMPL playback synced with original video           │
+└─────────────────────────────────────────────────────────┘
 ```
 
-Stage 1 runs in an isolated subprocess so its CUDA context is fully released before Stage 2 initialises (required to avoid illegal-memory-access errors when ultralytics fuses Conv2d layers after kornia).
+---
+
+## Quick Start
+
+```bash
+# 1. Clone
+git clone https://github.com/anukaishara/wham-motion-viewer.git --recursive
+cd wham-motion-viewer
+
+# 2. Setup environment & dependencies  (see Installation for full steps)
+conda create -n wham_dev python=3.9 -y && conda activate wham_dev
+pip install -r requirements.txt
+
+# 3. Download weights & models
+bash fetch_demo_data.sh   # WHAM / ViTPose / YOLO / DPVO checkpoints
+bash setup_models.sh      # SMPL GLB body models for Motion Viewer
+
+# 4. Build frontend & run
+cd motion_viewer && npm install && npm run build && cd ..
+./start.sh --prod         # → http://localhost:8787
+```
 
 ---
 
 ## Requirements
 
-- Ubuntu 20.04 / 22.04
-- Python 3.9 (conda env `wham_dev`)
-- CUDA-capable GPU (tested on RTX 5090 with CUDA 12.8)
-- Node.js ≥ 18 (for the Motion Viewer frontend)
+| Requirement | Version |
+|-------------|---------|
+| OS | Ubuntu 20.04 / 22.04 |
+| Python | 3.9 (conda env `wham_dev`) |
+| GPU | CUDA-capable (tested on RTX 5090, CUDA 12.8) |
+| Node.js | ≥ 18 |
 
 ---
 
@@ -62,8 +110,8 @@ Stage 1 runs in an isolated subprocess so its CUDA context is fully released bef
 ### 1. Clone with submodules
 
 ```bash
-git clone <repo-url> --recursive
-cd IPCV_Prj
+git clone https://github.com/anukaishara/wham-motion-viewer.git --recursive
+cd wham-motion-viewer
 ```
 
 ### 2. Create the conda environment
@@ -80,7 +128,7 @@ pip install torch==2.7.0+cu128 torchvision==0.22.0+cu128 torchaudio==2.7.0+cu128
     --index-url https://download.pytorch.org/whl/cu128
 ```
 
-> For a different CUDA version, replace `cu128` with your version (e.g. `cu121`) and pick matching torch/torchvision versions from [pytorch.org](https://pytorch.org/get-started/locally/).
+> For a different CUDA version, replace `cu128` with yours (e.g. `cu121`) and pick matching versions from [pytorch.org](https://pytorch.org/get-started/locally/).
 
 ### 4. Install torch-scatter
 
@@ -89,7 +137,7 @@ pip install torch-scatter==2.1.2+pt27cu128 \
     -f https://data.pyg.org/whl/torch-2.7.0+cu128.html
 ```
 
-### 5. Install pytorch3d (optional — required for `--visualize`)
+### 5. Install pytorch3d *(optional — only needed for `--visualize`)*
 
 ```bash
 TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9;9.0+PTX" \
@@ -119,13 +167,13 @@ pip install -r requirements.txt
 
 ### 9. Download model checkpoints
 
-Register at [SMPL](https://smpl.is.tue.mpg.de/) and [SMPLify](https://smplify.is.tue.mpg.de/) (the download script prompts for these credentials), then run:
+Register at [SMPL](https://smpl.is.tue.mpg.de/) and [SMPLify](https://smplify.is.tue.mpg.de/) (the script will prompt for credentials), then:
 
 ```bash
 bash fetch_demo_data.sh
 ```
 
-This downloads WHAM weights, ViTPose weights, YOLO weights, DPVO weights, and example videos into `checkpoints/` and `examples/`.
+Downloads WHAM, ViTPose, YOLO, and DPVO weights into `checkpoints/`.
 
 ### 10. Download Motion Viewer body models
 
@@ -133,7 +181,7 @@ This downloads WHAM weights, ViTPose weights, YOLO weights, DPVO weights, and ex
 bash setup_models.sh
 ```
 
-This downloads the SMPL GLB body models (female + male, ~152 MB total) into `motion_viewer/public/models/`.
+Downloads the custom SMPL GLB body models (~152 MB) into `motion_viewer/public/models/`.
 
 ### 11. Build the Motion Viewer frontend
 
@@ -150,46 +198,41 @@ cd ..
 
 ## Usage
 
-### Run the web app (recommended)
+### Web app (recommended)
 
 ```bash
 ./start.sh --prod
 ```
 
-Open **http://localhost:8787** in your browser. Upload a video, watch the live progress, then explore the 3D reconstruction in the Motion Viewer.
+Open **http://localhost:8787** — upload a video, watch live progress, then explore the 3D reconstruction in the Motion Viewer.
 
-For development (hot-reload frontend on port 5173):
+For development with hot-reload (frontend on port 5173):
 
 ```bash
 ./start.sh
 ```
 
-### Run the pipeline directly
+### Pipeline — command line
 
 ```bash
 conda run -n wham_dev python pipeline.py --input inputs/your_video.mp4
 ```
 
-Common options:
-
 | Flag | Description |
 |------|-------------|
 | `--output_dir DIR` | Root output directory (default: `outputs/`) |
-| `--visualize` | Render a 3D mesh overlay video (requires pytorch3d) |
+| `--visualize` | Render 3D mesh overlay video — requires pytorch3d |
 | `--run_smplify` | Temporal SMPLify refinement — slower, more accurate |
 | `--local_only` | Skip global SLAM trajectory (faster) |
 | `--skip_preprocess` | Reuse an existing preprocessed video |
 | `--calib FILE` | Camera calibration file (auto-estimated if omitted) |
 
-### Run the original WHAM demo
+### Original WHAM demo
 
 ```bash
 conda run -n wham_dev python demo.py --video examples/IMG_9732.mov --visualize
-```
 
-With known camera intrinsics:
-
-```bash
+# With known camera intrinsics
 conda run -n wham_dev python demo.py \
     --video examples/drone_video.mp4 \
     --calib examples/drone_calib.txt \
@@ -221,13 +264,11 @@ outputs/<video_name>/
 
 ## Validation
 
-Run the automated validation script against all output folders:
-
 ```bash
 conda run -n wham_dev python validate.py
 ```
 
-The script checks 10 properties per run without requiring a GPU or model weights:
+Checks 10 properties per output folder — no GPU or weights required:
 
 | Check | What it verifies |
 |-------|-----------------|
@@ -246,116 +287,51 @@ The script checks 10 properties per run without requiring a GPU or model weights
 
 ## Results
 
-Pipeline tested on 5 distinct activity types across 17 runs.
+Pipeline tested on 5 activity types across 17 runs.
 
 ### Per-video summary
 
-| Video | Frames | FPS | Duration | Theta jitter (rad/f) | Root travel (m) | Foot contact | Status |
-|-------|-------:|----:|----------:|---------------------:|----------------:|-------------:|--------|
-| Sprint | 371 | 25 | 14.9 s | 0.02737 | 34.66 | 33% | PASS |
-| Sprint 2 | 191 | 25 | 7.7 s | 0.01287 | 8.45 | 74% | PASS |
-| Female Dancer | 459 | 25 | 18.4 s | 0.01440 | 4.69 | 99% | PASS |
-| Male Dancer | 65 | 25 | 5.6 s | 0.01838 | 1.94 | 80% | FAIL† |
-| Parkour | 302 | 24 | 18.7 s | 0.00801 | 4.85 | 76% | PASS |
-| Taichi | 712 | 24 | 29.7 s | 0.00389 | 2.90 | 100% | PASS |
+| Video | Frames | FPS | Duration | Jitter (rad/f) | Root travel | Foot contact | Status |
+|-------|-------:|----:|---------:|---------------:|------------:|-------------:|:------:|
+| Sprint | 371 | 25 | 14.9 s | 0.02737 | 34.66 m | 33% | ✅ PASS |
+| Sprint 2 | 191 | 25 | 7.7 s | 0.01287 | 8.45 m | 74% | ✅ PASS |
+| Female Dancer | 459 | 25 | 18.4 s | 0.01440 | 4.69 m | 99% | ✅ PASS |
+| Male Dancer | 65 | 25 | 5.6 s | 0.01838 | 1.94 m | 80% | ❌ FAIL† |
+| Parkour | 302 | 24 | 18.7 s | 0.00801 | 4.85 m | 76% | ✅ PASS |
+| Taichi | 712 | 24 | 29.7 s | 0.00389 | 2.90 m | 100% | ✅ PASS |
 
-†Male Dancer failed frame alignment — tracker lost the subject for 54% of frames (person partially off-screen for extended periods).
+†Male Dancer: tracker lost subject for 54% of frames (person partially off-screen).
 
 ### Physical plausibility
 
-Results are physically consistent with the activity type:
-
 - **Jitter scales with motion intensity** — sprint (0.027) > dancer (0.014) > parkour (0.008) > taichi (0.004)
-- **Root travel matches expected displacement** — sprinter covers 34.7 m across 14.9 s (≈ 8.4 km/h, plausible for indoor sprint); taichi moves 2.9 m in 29.7 s (near stationary, correct)
-- **Foot contact patterns reflect activity** — sprinter is airborne 67% of the time (low contact); taichi maintains ground contact ≥ 90% of frames; dancer at 99% (choreographed floor routine)
-- **Body shape (betas) stays within ±2σ** across all subjects (max observed |β| = 1.45)
+- **Root travel matches expected displacement** — sprinter covers 34.7 m in 14.9 s (≈ 8.4 km/h); taichi moves 2.9 m in 29.7 s (near-stationary, correct)
+- **Foot contact reflects activity** — sprinter airborne 67% of frames; taichi grounded ≥ 90%; dancer at 99% (floor routine)
+- **Body shape stays within ±2σ** across all subjects (max observed |β| = 1.45)
 
-### Frame alignment
+### Effect of Savitzky-Golay smoothing
 
-The preprocessed video and the theta/trans/contact CSVs are frame-aligned by construction. For well-tracked sequences, WHAM drops at most 1 frame:
+Sprint sequence (371 frames), window=7, poly=3:
 
-| Video | Source frames | Theta frames | Dropped |
-|-------|-------------:|-------------:|--------:|
-| Sprint | 372 | 371 | 1 |
-| Sprint 2 | 192 | 191 | 1 |
-| Female Dancer | 460 | 459 | 1 |
-| Parkour | 448 | 302 | 146 (tracker) |
+| Metric | Raw WHAM | After SG smoothing |
+|--------|:--------:|:-----------------:|
+| Mean jitter | 0.0628 rad/f | **0.0274 rad/f** |
+| Median jitter | 0.0321 rad/f | **0.0182 rad/f** |
+| P95 jitter | 0.2069 rad/f | **0.0910 rad/f** |
+| Smoothness score (↑) | 0.9409 | **0.9734** |
 
-### Temporal smoothness — effect of Savitzky-Golay post-processing
-
-On the sprint sequence (371 frames), applying Savitzky-Golay smoothing (window=7, poly=3) after quaternion continuity correction significantly reduces temporal jitter:
-
-| Metric | Raw WHAM output | After SG smoothing |
-|--------|----------------:|-------------------:|
-| Mean jitter | 0.0628 rad/frame | **0.0274 rad/frame** |
-| Median jitter | 0.0321 rad/frame | **0.0182 rad/frame** |
-| P95 jitter | 0.2069 rad/frame | **0.0910 rad/frame** |
-| Smoothness score (↑ better) | 0.9409 | **0.9734** |
-
-The pelvis joint benefits most: 0.510 → 0.021 rad/frame, which directly eliminates the barrel-roll artifact visible in unsmoothed output.
+Pelvis joint improves most: 0.510 → 0.021 rad/f, eliminating the barrel-roll artifact in raw output.
 
 ### Determinism
 
-The same video processed twice produces bit-identical outputs. Three separate runs of `sprint_2` all yield `thetas` jitter = 0.01287 and travel = 8.446 m, confirming the pipeline is fully deterministic given the same input.
-
-### Preprocessing visual comparison
-
-Stage 1 GPU preprocessing improves contrast, sharpens joint landmarks, and suppresses background noise without altering the subject's appearance:
-
-> `outputs/sprint_raw_vs_preprocessed.png` — 4 frames × 2 rows (raw top, preprocessed bottom)
-
----
-
-## Training
-
-Training follows the two-stage procedure from the original WHAM paper.
-
-### Stage 1 — 2D-to-SMPL lifting on AMASS
-
-```bash
-python train.py --cfg configs/yamls/stage1.yaml
-```
-
-### Stage 2 — Feature integration on video datasets
-
-```bash
-python train.py --cfg configs/yamls/stage2.yaml \
-    TRAIN.CHECKPOINT checkpoints/wham_stage1.tar.pth
-```
-
-See [docs/DATASET.md](docs/DATASET.md) for dataset preparation instructions.
-
----
-
-## Evaluation
-
-```bash
-# 3DPW
-python -m lib.eval.evaluate_3dpw \
-    --cfg configs/yamls/demo.yaml \
-    TRAIN.CHECKPOINT checkpoints/wham_vit_w_3dpw.pth.tar
-
-# RICH
-python -m lib.eval.evaluate_rich \
-    --cfg configs/yamls/demo.yaml \
-    TRAIN.CHECKPOINT checkpoints/wham_vit_w_3dpw.pth.tar
-
-# EMDB (split 1 and 2)
-python -m lib.eval.evaluate_emdb \
-    --cfg configs/yamls/demo.yaml --eval-split 1 \
-    TRAIN.CHECKPOINT checkpoints/wham_vit_w_3dpw.pth.tar
-
-python -m lib.eval.evaluate_emdb \
-    --cfg configs/yamls/demo.yaml --eval-split 2 \
-    TRAIN.CHECKPOINT checkpoints/wham_vit_w_3dpw.pth.tar
-```
+The same video processed twice produces bit-identical outputs. Three independent runs of `sprint_2` all yield jitter = 0.01287 rad/f and travel = 8.446 m.
 
 ---
 
 ## Project structure
 
 ```
-IPCV_Prj/
+wham-motion-viewer/
 ├── pipeline.py          unified 3-stage pipeline (preprocess → WHAM → extract)
 ├── server.py            FastAPI backend for the web app
 ├── wham_api.py          Python API wrapper
@@ -377,32 +353,72 @@ IPCV_Prj/
 │   ├── ViTPose/         2D keypoint estimator
 │   └── DPVO/            dense visual odometry (global SLAM)
 ├── motion_viewer/       React + Vite 3D viewer frontend
-├── checkpoints/         pretrained model weights
-├── examples/            sample videos and calibration files
+├── checkpoints/         pretrained model weights  (not in repo — run fetch_demo_data.sh)
+├── examples/            sample calibration files
 ├── inputs/              place your own videos here
 └── outputs/             pipeline results written here
 ```
 
 ---
 
+## Training
+
+### Stage 1 — 2D-to-SMPL lifting on AMASS
+
+```bash
+python train.py --cfg configs/yamls/stage1.yaml
+```
+
+### Stage 2 — Feature integration on video datasets
+
+```bash
+python train.py --cfg configs/yamls/stage2.yaml \
+    TRAIN.CHECKPOINT checkpoints/wham_stage1.tar.pth
+```
+
+See [docs/DATASET.md](docs/DATASET.md) for dataset preparation.
+
+---
+
+## Evaluation
+
+```bash
+# 3DPW
+python -m lib.eval.evaluate_3dpw \
+    --cfg configs/yamls/demo.yaml \
+    TRAIN.CHECKPOINT checkpoints/wham_vit_w_3dpw.pth.tar
+
+# RICH
+python -m lib.eval.evaluate_rich \
+    --cfg configs/yamls/demo.yaml \
+    TRAIN.CHECKPOINT checkpoints/wham_vit_w_3dpw.pth.tar
+
+# EMDB
+python -m lib.eval.evaluate_emdb \
+    --cfg configs/yamls/demo.yaml --eval-split 1 \
+    TRAIN.CHECKPOINT checkpoints/wham_vit_w_3dpw.pth.tar
+```
+
+---
+
 ## Acknowledgements
 
-The WHAM model and training code are from [Shin et al., CVPR 2024](https://arxiv.org/abs/2312.07531).  
-The base implementation borrows from [VIBE](https://github.com/mkocabas/VIBE) and [TCMR](https://github.com/hongsukchoi/TCMR_RELEASE).  
-2D keypoints are estimated with [ViTPose](https://github.com/ViTAE-Transformer/ViTPose).  
-Global camera motion is estimated with [DPVO](https://github.com/princeton-vl/DPVO).
+- [WHAM](https://arxiv.org/abs/2312.07531) — Shin et al., CVPR 2024
+- [VIBE](https://github.com/mkocabas/VIBE) and [TCMR](https://github.com/hongsukchoi/TCMR_RELEASE) — base implementation
+- [ViTPose](https://github.com/ViTAE-Transformer/ViTPose) — 2D keypoint estimation
+- [DPVO](https://github.com/princeton-vl/DPVO) — dense visual odometry
 
 ## Citation
 
 ```bibtex
 @InProceedings{shin2023wham,
-  title   = {WHAM: Reconstructing World-grounded Humans with Accurate 3D Motion},
-  author  = {Shin, Soyong and Kim, Juyong and Halilaj, Eni and Black, Michael J.},
+  title     = {WHAM: Reconstructing World-grounded Humans with Accurate 3D Motion},
+  author    = {Shin, Soyong and Kim, Juyong and Halilaj, Eni and Black, Michael J.},
   booktitle = {Computer Vision and Pattern Recognition (CVPR)},
-  year    = {2024}
+  year      = {2024}
 }
 ```
 
 ## License
 
-See [LICENSE](./LICENSE) for details.
+MIT — see [LICENSE](./LICENSE) for details.
