@@ -289,6 +289,8 @@ Checks 10 properties per output folder — no GPU or weights required:
 
 Pipeline tested on 5 activity types across 17 runs.
 
+![Results Overview](docs/results.png)
+
 ### Per-video summary
 
 | Video | Frames | FPS | Duration | Jitter (rad/f) | Root travel | Foot contact | Status |
