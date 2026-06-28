@@ -5,6 +5,7 @@ dataset/
 # ── Input videos (copyrighted) ──────────────────────────────────────────────
 inputs/
 uploads/
+Results/
 
 # ── Generated outputs ───────────────────────────────────────────────────────
 outputs/

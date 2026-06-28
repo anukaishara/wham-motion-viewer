@@ -13,6 +13,8 @@
 Built on top of [WHAM: Reconstructing World-grounded Humans with Accurate 3D Motion](https://arxiv.org/abs/2312.07531) (CVPR 2024)  
 as an IPCV course project.
 
+![Demo — Input vs 3D Reconstruction](docs/demo.gif)
+
 </div>
 
 ---
